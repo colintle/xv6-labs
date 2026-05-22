@@ -196,6 +196,7 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_sleep\
+	$U/_sixfive\
 
 
 
@@ -275,6 +276,7 @@ UEXTRA=
 ifeq ($(LAB),util)
 	UEXTRA += user/findtest.sh
 	UEXTRA += user/sixfive.txt
+	UEXTRA += user/text.txt
 	UPROGS += $U/_memdump
 endif
 
