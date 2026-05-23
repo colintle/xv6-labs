@@ -2,7 +2,11 @@
 #include "kernel/stat.h"
 #include "kernel/fcntl.h"
 #include "kernel/fs.h"
+#include "kernel/param.h"
 #include "user/user.h"
+
+char *exec_argv[MAXARG];
+int exec_argc = 0;
 
 char *fmtname(char *path) {
   char *p;
@@ -55,15 +59,25 @@ void find(char *path, char *file_pattern) {
       }
       if (st.type == T_FILE) {
         if (strcmp(fmtname(buf), file_pattern) == 0) {
-          printf("%s\n", buf);
+          if (exec_argc == 0) {
+            printf("%s\n", buf);
+          }
+          else {
+            int pid = fork();
+            if (pid == 0) {
+              exec_argv[exec_argc] = buf;
+              exec(exec_argv[0], exec_argv);
+              exit(0);
+            } else {
+              wait(0);
+            }
+          }
         }
       }
       if (st.type == T_DIR) {
         if (strcmp(fmtname(buf), ".") == 0 || strcmp(fmtname(buf), "..") == 0) {
           continue;
         }
-          // printf("%s|\n", fmtname(buf));
-          // printf("buffer: %s\n", buf);
         find(buf, file_pattern);
       }
     }
@@ -73,10 +87,14 @@ void find(char *path, char *file_pattern) {
 }
 
 int main(int argc, char *argv[]) {
-  if (argc != 3) {
-    exit(1);
+
+  if (argc > 3 && strcmp(argv[3], "-exec") == 0) {
+    for (int i = 4; i < argc && exec_argc < MAXARG - 1; i++, exec_argc++) {
+      exec_argv[exec_argc] = argv[i];
+    }
   }
   find(argv[1], argv[2]);
+
   exit(0);
   return 0;
 }
