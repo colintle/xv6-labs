@@ -105,3 +105,8 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// return the number of free pages
+uint64 sys_freepages(void){
+  return kfreepages();
+}

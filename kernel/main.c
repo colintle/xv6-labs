@@ -30,6 +30,7 @@ main()
     virtio_disk_init(); // emulated hard disk
     userinit();      // first user process
     __sync_synchronize();
+    printf("Number of free pages: %d\n", kfreepages());
     started = 1;
   } else {
     while(started == 0)
