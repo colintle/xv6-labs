@@ -114,8 +114,13 @@ uint64 sys_freepages(void){
 // sandbox a process to restrict the system calls it can make
 uint64 sys_interpose(void){
   int mask;
+  char path[MAXPATH];
 
   argint(0, &mask);
+  if(argstr(1, path, MAXPATH) < 0)
+    return -1;
+
   myproc()->mask = mask;
+  safestrcpy(myproc()->allowed_path, path, sizeof(myproc()->allowed_path));
   return 0;
 }

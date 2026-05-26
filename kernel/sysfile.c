@@ -15,6 +15,7 @@
 #include "sleeplock.h"
 #include "file.h"
 #include "fcntl.h"
+#include "syscall.h"
 
 // Fetch the nth word-sized system call argument as a file descriptor
 // and return both the descriptor and the corresponding struct file.
@@ -49,6 +50,30 @@ fdalloc(struct file *f)
     }
   }
   return -1;
+}
+
+static int bypass_mask(char* path_to_consider){
+  int num = myproc()->trapframe->a7;
+  if (num == SYS_open && 1 << num & myproc()-> mask){
+    if (strncmp(path_to_consider, myproc()->allowed_path, sizeof(myproc()-> allowed_path)) == 0)  
+    {
+      return 1;
+    }
+    else{
+      return 0;
+    }
+  }
+  if (num == SYS_exec && 1 << num & myproc()-> mask){
+    if (strncmp(path_to_consider, myproc()->allowed_path, sizeof(myproc()-> allowed_path)) == 0)  
+    {
+      return 1;
+    }
+    else{
+      return 0;
+    }
+  }
+
+  return 1;
 }
 
 uint64
@@ -314,6 +339,9 @@ sys_open(void)
   if((n = argstr(0, path, MAXPATH)) < 0)
     return -1;
 
+  if (bypass_mask(path) == 0){
+    return -1;
+  }
   begin_op();
 
   if(omode & O_CREATE){
@@ -440,6 +468,9 @@ sys_exec(void)
 
   argaddr(1, &uargv);
   if(argstr(0, path, MAXPATH) < 0) {
+    return -1;
+  }
+  if (bypass_mask(path) == 0){
     return -1;
   }
   memset(argv, 0, sizeof(argv));
