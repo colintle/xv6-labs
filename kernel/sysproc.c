@@ -110,3 +110,12 @@ sys_uptime(void)
 uint64 sys_freepages(void){
   return kfreepages();
 }
+
+// sandbox a process to restrict the system calls it can make
+uint64 sys_interpose(void){
+  int mask;
+
+  argint(0, &mask);
+  myproc()->mask = mask;
+  return 0;
+}

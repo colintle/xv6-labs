@@ -196,6 +196,7 @@ UPROGS=\
 	$U/_forphan\
 	$U/_dorphan\
 	$U/_freepages\
+	$U/_sandbox\
 
 
 
