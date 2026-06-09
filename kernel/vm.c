@@ -259,6 +259,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+    printf("uvmalloc va=%p pa=%p\n", (void*)a, mem);
 #ifndef LAB_SYSCALL
     memset(mem, 0, sz);
  #endif

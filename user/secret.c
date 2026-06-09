@@ -16,9 +16,9 @@ main(int argc, char *argv[])
   }
 
   strcpy(data, "This may help.");
-
+  printf("data = %p\n", data);
   strcpy(data + 16, argv[1]);
-
+  printf("data = %p\n", data);
   exit(0);
 }
 

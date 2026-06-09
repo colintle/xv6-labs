@@ -46,3 +46,6 @@ You will need a RISC-V "newlib" tool chain from
 https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
 riscv64-softmmu.  Once they are installed, and in your shell
 search path, you can run "make qemu".
+
+## Attack xv6
+secret test stores "This may help." and "test" inside its global data array. The log shows data = 0x1010, so the data array is on virtual page 0x1000. Your uvmalloc log shows that virtual page 0x1000 was mapped to physical page 0x87f1e000. When secret exits, xv6 frees its pages, including 0x87f1e000. Because kfree() pushes pages onto the front of the free list, later frees go above it, so attack does not immediately get that page. When attack starts, xv6 first allocates pages just to load/run attack, then your sbrk() allocations begin. In the attack log, the important line is uvmalloc va=0x15000 pa=0x87f1e000, meaning the old secret page is finally reused at attack virtual address 0x15000. Since your sbrk() scan started at 0x4000, the offset is 0x15000 - 0x4000 = 0x11000, which is page index 17, the 18th page. That is why 16 or 17 pages missed, but 18 pages worked. The scan also found a fake marker on page 16, but that printed data = %p; the real marker was on page 17 and printed test
