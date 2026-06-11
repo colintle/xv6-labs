@@ -1,0 +1,109 @@
+Question
+For every page table entry in the print_pgtbl output, explain what it logically contains and what its permission bits are. Figure 3.4 in the xv6 book might be helpful, although note that the figure might have a slightly different set of pages than process that's being inspected here. Note that xv6 doesn't place the virtual pages consecutively in physical memory.
+
+Permission bit meanings
+-----------------------
+In xv6/RISC-V, the low bits of a page table entry describe whether the page is valid and what accesses are allowed.
+
+0x01 = PTE_V = Valid
+0x02 = PTE_R = Read
+0x04 = PTE_W = Write
+0x08 = PTE_X = Execute
+0x10 = PTE_U = User accessible
+
+To calculate permissions, break the hex value into powers of two, then match each power to the table above.
+
+Permission calculations
+-----------------------
+0x5B:
+  0x5B = 0x40 + 0x10 + 0x08 + 0x02 + 0x01
+       = software bit + U + X + R + V
+  Logical permissions: Valid, Readable, Executable, User-accessible, Not writable
+
+0x17:
+  0x17 = 0x10 + 0x04 + 0x02 + 0x01
+       = U + W + R + V
+  Logical permissions: Valid, Readable, Writable, User-accessible, Not executable
+
+0x07:
+  0x07 = 0x04 + 0x02 + 0x01
+       = W + R + V
+  Logical permissions: Valid, Readable, Writable, Not user-accessible, Not executable
+
+0xD7:
+  0xD7 = 0x80 + 0x40 + 0x10 + 0x04 + 0x02 + 0x01
+       = software bits + U + W + R + V
+  Logical permissions: Valid, Readable, Writable, User-accessible, Not executable
+
+0xC7:
+  0xC7 = 0x80 + 0x40 + 0x04 + 0x02 + 0x01
+       = software bits + W + R + V
+  Logical permissions: Valid, Readable, Writable, Not user-accessible, Not executable
+
+0x4B:
+  0x4B = 0x40 + 0x08 + 0x02 + 0x01
+       = software bit + X + R + V
+  Logical permissions: Valid, Readable, Executable, Not user-accessible, Not writable
+
+What each page represents
+-------------------------
+VA 0x0000 -> PA 0x87F22000, perm 0x5B
+  This is a user text/code page.
+  It contains compiled instructions from the user program.
+  It is readable and executable by user code, but not writable.
+
+VA 0x1000 -> PA 0x87F1F000, perm 0x5B
+  This is another user text/code page.
+  The program's code is larger than one page, so it continues here.
+  It is readable and executable by user code, but not writable.
+
+VA 0x2000 -> PA 0x87F1E000, perm 0x17
+  This is user data/BSS.
+  It contains global variables and static variables.
+  It is readable and writable by user code, but not executable.
+
+VA 0x3000 -> PA 0x87F1D000, perm 0x07
+  This is the guard page below the user stack.
+  It is valid, readable, and writable from the kernel's perspective, but it is not user-accessible because PTE_U is missing.
+  If user code tries to access it, the process should fault.
+  It helps detect stack overflow.
+
+VA 0x4000 -> PA 0x87F1C000, perm 0xD7
+  This is the user stack page.
+  It stores local variables, function call frames, saved return addresses, and stack data.
+  It is readable and writable by user code, but not executable.
+
+VA 0x5000 and above in the low range
+  These entries are unmapped if the PTE is 0.
+  There is no heap shown here because the program has not called sbrk() or malloc() to grow the heap.
+  If the program called sbrk(), new heap pages would appear after the stack/data region with readable, writable, user permissions.
+
+VA 0x3FFFFFE000 -> PA 0x87F42000, perm 0xC7
+  This is the trapframe page.
+  The kernel uses it to save user registers during traps, system calls, interrupts, and exceptions.
+  It is not user-accessible because PTE_U is missing.
+
+VA 0x3FFFFFF000 -> PA 0x80006000, perm 0x4B
+  This is the trampoline page.
+  It contains assembly code used to switch between user mode and kernel mode.
+  It is readable and executable, but not writable and not user-accessible.
+
+Important idea
+--------------
+The virtual addresses are what the process sees. The physical addresses are where the actual memory pages live. xv6 can map consecutive virtual pages to non-consecutive physical pages, so the physical addresses do not need to be next to each other.
+
+Simplified layout
+-----------------
+Low virtual addresses:
+  0x0000: text/code
+  0x1000: text/code
+  0x2000: data/BSS
+  0x3000: guard page
+  0x4000: user stack
+  0x5000+: unmapped unless heap grows
+
+High virtual addresses:
+  0x3FFFFFE000: trapframe
+  0x3FFFFFF000: trampoline
+
+
