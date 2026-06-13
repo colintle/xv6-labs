@@ -140,11 +140,28 @@ walkaddr(pagetable_t pagetable, uint64 va)
   return pa;
 }
 
+void vmprint_recursive(pagetable_t pagetable, int level, uint64 index) {
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if (pte & PTE_V){
+      for (int i = 0; i <= level; i++){
+        printf(" ..");
+      }
+      uint64 va = (index + (i << (2-level) * 9)) << 12;
+      printf("%p: pte %p pa %p\n", (void*)va, (void*)pte, (void*)PTE2PA(pte));
+      if ((pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+        uint64 child = PTE2PA(pte);
+        vmprint_recursive((pagetable_t)child, level + 1, index + (i << (2-level) * 9));
+      }
+    }
+  }
+}
 
 #if defined(LAB_PGTBL) || defined(SOL_MMAP) || defined(SOL_COW)
 void
 vmprint(pagetable_t pagetable) {
-  // your code here
+  printf("page table %p\n", pagetable);
+  vmprint_recursive(pagetable, 0, 0);
 }
 #endif
 
