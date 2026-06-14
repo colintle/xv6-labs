@@ -340,27 +340,47 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
   uint64 a;
   pte_t *pte;
-  int sz = PGSIZE;
 
   if((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for(a = va; a < va + npages*PGSIZE; a += sz){
-    if((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
+  for(a = va; a < va + npages*PGSIZE;){
+    int target_level;
+    if((pte = find_leaf_pte(pagetable, a, &target_level)) == 0) // leaf page table entry allocated?
       continue;
     if((*pte & PTE_V) == 0)  // has physical page been allocated?
       continue;
-    sz = PGSIZE;
-    if(PTE_FLAGS(*pte) == PTE_V)
-      panic("uvmunmap: not a leaf");
-    if(do_free){
-      uint64 pa = PTE2PA(*pte);
-      kfree((void*)pa);
+    if (target_level == 0) {
+      if (do_free) {
+        uint64 pa = PTE2PA(*pte);
+        kfree((void *)pa);
+      }
+      *pte = 0;
+      a += PGSIZE;
     }
-    *pte = 0;
+    else if (target_level == 1){
+      uint64 start_of_superpage = SUPERPGROUNDDOWN(a);
+      uint64 end_of_superpage = SUPERPGROUNDUP(a);
+
+      if ((a == start_of_superpage) &&
+          (end_of_superpage <= va + npages * PGSIZE)) {
+        if (do_free) {
+          uint64 pa = PTE2PA(*pte);
+          superfree((void *)pa);
+        }
+        *pte = 0;
+        a += SUPERPGSIZE;
+      } else {
+        if (denote_superpage(pagetable, a) < 0){
+          panic("uvmunmap: denote_superpage failed");
+        }
+      }
+    }
+    else{
+      panic("level 2 leaf found");
+    }
   }
 }
-
 
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
@@ -492,35 +512,62 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
-int
-uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
-{
+int uvmcopy(pagetable_t old, pagetable_t new, uint64 sz) {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
   char *mem;
-  int szinc = PGSIZE;
+  int level;
 
-  for(i = 0; i < sz; i += szinc){
-    if((pte = walk(old, i, 0)) == 0)
-      continue;
-    if((*pte & PTE_V) == 0) {
-      continue;
-    }
-    szinc = PGSIZE;
+  for (i = 0; i < sz;) {
+    pte = find_leaf_pte(old, i, &level);
+
+    if (pte == 0)
+      panic("uvmcopy: pte should exist");
+
+    if ((*pte & PTE_V) == 0)
+      panic("uvmcopy: page not present");
+
+    if (!PTE_LEAF(*pte))
+      panic("uvmcopy: not leaf");
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+
+    if (level == 1) {
+      mem = superalloc();
+      if (mem == 0)
+        goto err;
+
+      memmove(mem, (char *)pa, SUPERPGSIZE);
+
+      if (supermappages(new, i, SUPERPGSIZE, (uint64)mem, flags & ~PTE_V) != 0) {
+        superfree(mem);
+        goto err;
+      }
+
+      i += SUPERPGSIZE;
+    } else if (level == 0) {
+      mem = kalloc();
+      if (mem == 0)
+        goto err;
+
+      memmove(mem, (char *)pa, PGSIZE);
+
+      if (mappages(new, i, PGSIZE, (uint64)mem, flags & ~PTE_V) != 0) {
+        kfree(mem);
+        goto err;
+      }
+
+      i += PGSIZE;
+    } else {
+      panic("uvmcopy: level 2 leaf unexpected");
     }
   }
+
   return 0;
 
- err:
+err:
   uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
