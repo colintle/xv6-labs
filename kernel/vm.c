@@ -143,23 +143,27 @@ walk_to_target_level(pagetable_t pagetable, uint64 va, int alloc, int target_lev
 }
 
 // Find the leaf PTE (to determine if SUPERPG or PG)
+// Find the leaf PTE (to determine if SUPERPG or PG)
 pte_t *find_leaf_pte(pagetable_t pagetable, uint64 va, int *target_level) {
   if (va >= MAXVA)
-    panic("walk_to_target_level");
+    panic("find_leaf_pte");
 
-  for (int level = 2; level > 0; level--) {
+  for (int level = 2; level >= 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
-    if (*pte & PTE_V) {
-      pagetable = (pagetable_t)PTE2PA(*pte);
-      if (PTE_LEAF(*pte)) {
-        *target_level = level;
-        return pte;
-      }
-    }
-    else{
+
+    if ((*pte & PTE_V) == 0)
       return 0;
+
+    if (PTE_LEAF(*pte)) {
+      *target_level = level;
+      return pte;
     }
+    if (level == 0)
+      return 0;
+
+    pagetable = (pagetable_t)PTE2PA(*pte);
   }
+
   return 0;
 }
 
@@ -396,9 +400,9 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm){
 
   oldsz = PGROUNDUP(oldsz);
   for (a = oldsz; a < newsz; a += sz) {
-    if ((oldsz % SUPERPGSIZE == 0) && (newsz - a > SUPERPGSIZE)) {
+    if ((a % SUPERPGSIZE == 0) && (newsz - a >= SUPERPGSIZE)) {
       sz = SUPERPGSIZE;
-      mem = kalloc();
+      mem = superalloc();
       if (mem == 0) {
         uvmdealloc(pagetable, a, oldsz);
         return 0;
