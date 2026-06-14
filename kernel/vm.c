@@ -365,8 +365,8 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 // Allocate PTEs and physical memory to grow process from oldsz to
 // newsz, which need not be page aligned.  Returns new size or 0 on error.
 uint64
-uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
-{
+uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm){
+
   char *mem;
   uint64 a;
   int sz;
@@ -375,25 +375,68 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     return oldsz;
 
   oldsz = PGROUNDUP(oldsz);
-  for(a = oldsz; a < newsz; a += sz){
-    sz = PGSIZE;
-    mem = kalloc();
-    if(mem == 0){
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
-    }
-#ifndef LAB_SYSCALL
-    memset(mem, 0, sz);
- #endif
-    if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
-      kfree(mem);
-      uvmdealloc(pagetable, a, oldsz);
-      return 0;
+  for (a = oldsz; a < newsz; a += sz) {
+    if ((oldsz % SUPERPGSIZE == 0) && (newsz - a > SUPERPGSIZE)) {
+      sz = SUPERPGSIZE;
+      mem = kalloc();
+      if (mem == 0) {
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      memset(mem, 0, sz);
+      if (supermappages(pagetable, a, sz, (uint64)mem, PTE_R | PTE_U | xperm) != 0) {
+        superfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+    } else {
+      sz = PGSIZE;
+      mem = kalloc();
+      if (mem == 0) {
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      memset(mem, 0, sz);
+      if (mappages(pagetable, a, sz, (uint64)mem, PTE_R | PTE_U | xperm) != 0) {
+        kfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
     }
   }
   return newsz;
 }
 
+// uint64
+// uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
+// {
+//   char *mem;
+//   uint64 a;
+//   int sz;
+//
+//   if(newsz < oldsz)
+//     return oldsz;
+//
+//   oldsz = PGROUNDUP(oldsz);
+//   for(a = oldsz; a < newsz; a += sz){
+//     sz = PGSIZE;
+//     mem = kalloc();
+//     if(mem == 0){
+//       uvmdealloc(pagetable, a, oldsz);
+//       return 0;
+//     }
+// #ifndef LAB_SYSCALL
+//     memset(mem, 0, sz);
+//  #endif
+//     if(mappages(pagetable, a, sz, (uint64)mem, PTE_R|PTE_U|xperm) != 0){
+//       kfree(mem);
+//       uvmdealloc(pagetable, a, oldsz);
+//       return 0;
+//     }
+//   }
+//   return newsz;
+// }
+//
 // Deallocate user pages to bring the process size from oldsz to
 // newsz.  oldsz and newsz need not be page-aligned, nor does newsz
 // need to be less than oldsz.  oldsz can be larger than the actual
