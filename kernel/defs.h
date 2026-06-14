@@ -240,4 +240,7 @@ int             e1000_transmit(char *, int);
 void            netinit(void);
 void            net_rx(char *buf, int len);
 
+// kalloc.c
+void*           superalloc(void);
+void            superfree(void *);
 #endif
