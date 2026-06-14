@@ -290,6 +290,35 @@ supermappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm
   return 0;
 }
 
+int denote_superpage(pagetable_t  pagetable, uint64 va){
+  va = SUPERPGROUNDDOWN(va);
+
+  pte_t *spte = walk_to_target_level(pagetable, va, 0, 1);
+
+  if(spte == 0)
+    return -1;
+
+  if((*spte & PTE_V) == 0 || !PTE_LEAF(*spte))
+    return -1;
+
+  uint64 pa = PTE2PA(*spte);
+  uint flags = PTE_FLAGS(*spte);
+
+  pagetable_t newpt = (pagetable_t)kalloc();
+  if(newpt == 0)
+    return -1;
+
+  memset(newpt, 0, PGSIZE);
+
+  // For level 0
+  for(int i = 0; i < 512; i++) {
+    newpt[i] = PA2PTE(pa + i * PGSIZE) | flags;
+  }
+
+  *spte = PA2PTE((uint64)newpt) | PTE_V;
+  return 0;
+}
+
 // create an empty user page table.
 // returns 0 if out of memory.
 pagetable_t
