@@ -66,6 +66,8 @@ void            ireclaim(int);
 void*           kalloc(void);
 void            kfree(void *);
 void            kinit(void);
+void*           superalloc(void);
+void            superfree(void *);
 
 // log.c
 void            initlog(int, struct superblock*);
@@ -240,7 +242,4 @@ int             e1000_transmit(char *, int);
 void            netinit(void);
 void            net_rx(char *buf, int len);
 
-// kalloc.c
-void*           superalloc(void);
-void            superfree(void *);
 #endif

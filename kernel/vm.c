@@ -117,6 +117,52 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   return &pagetable[PX(0, va)];
 }
 
+pte_t *
+walk_to_target_level(pagetable_t pagetable, uint64 va, int alloc, int target_level)
+{
+  if(va >= MAXVA)
+    panic("walk_to_target_level");
+
+  for(int level = 2; level > target_level; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    if(*pte & PTE_V) {
+      pagetable = (pagetable_t)PTE2PA(*pte);
+#ifdef LAB_PGTBL
+      if(PTE_LEAF(*pte)) {
+        return pte;
+      }
+#endif
+    } else {
+      if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
+        return 0;
+      memset(pagetable, 0, PGSIZE);
+      *pte = PA2PTE(pagetable) | PTE_V;
+    }
+  }
+  return &pagetable[PX(target_level, va)];
+}
+
+// Find the leaf PTE (to determine if SUPERPG or PG)
+pte_t *find_leaf_pte(pagetable_t pagetable, uint64 va, int *target_level) {
+  if (va >= MAXVA)
+    panic("walk_to_target_level");
+
+  for (int level = 2; level > 0; level--) {
+    pte_t *pte = &pagetable[PX(level, va)];
+    if (*pte & PTE_V) {
+      pagetable = (pagetable_t)PTE2PA(*pte);
+      if (PTE_LEAF(*pte)) {
+        *target_level = level;
+        return pte;
+      }
+    }
+    else{
+      return 0;
+    }
+  }
+  return 0;
+}
+
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
