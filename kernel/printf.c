@@ -149,3 +149,17 @@ printfinit(void)
 {
   initlock(&pr.lock, "pr");
 }
+
+void backtrace(void){
+  uint64 begin_of_stack = PGROUNDDOWN(r_fp());
+  uint64 fp = r_fp();
+  // uint64 fp = *(uint64 *)(r_fp() - 8);
+  // printf("%p\n", (void*)fp);
+
+  while (fp > begin_of_stack){
+    // Without defer, it is the address of the pointer of the return_address
+    uint64 return_address = *(uint64 *)(fp- 8);
+    printf("%p\n", (void*)return_address);
+    fp = *(uint64 *)(fp - 16);
+  }
+}
