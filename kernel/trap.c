@@ -81,8 +81,16 @@ usertrap(void)
     kexit(-1);
 
   // give up the CPU if this is a timer interrupt.
-  if(which_dev == 2)
+  if(which_dev == 2){
+    p->time_past++;
+    if (p->time_past == p->interval){
+      struct trapframe *tf = kalloc();
+      memmove(tf, p->trapframe, PGSIZE);
+      p->saved_trapframe = tf;
+      p->trapframe->epc = p->handler;
+    }
     yield();
+  }
 
   prepare_return();
 

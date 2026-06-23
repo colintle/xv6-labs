@@ -503,3 +503,17 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64 sys_sigalarm(void){
+  argint(0, &myproc()->interval);
+  argaddr(1, &myproc()->handler);
+  return 0;
+}
+
+uint64 sys_sigreturn(void){
+  struct proc* p = myproc();
+  memmove(p->trapframe, p->saved_trapframe, sizeof(struct trapframe));
+  p->time_past = 0;
+  kfree(p->saved_trapframe);
+  return p->trapframe->a0;
+}
