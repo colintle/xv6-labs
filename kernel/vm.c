@@ -299,7 +299,6 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -308,11 +307,13 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue;   // physical page hasn't been allocated
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    if (*pte & PTE_W) {
+      *pte &= ~PTE_W;
+      *pte |= PTE_COW;
+      flags = PTE_FLAGS(*pte);
+    }
+    krefcount_increment((void*)pa);
+    if (mappages(new, i, PGSIZE, (uint64)pa, flags) != 0) {
       goto err;
     }
   }
@@ -349,19 +350,34 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     va0 = PGROUNDDOWN(dstva);
     if(va0 >= MAXVA)
       return -1;
-  
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0) {
+
+    // Try to walk the page table
+    pte = walk(pagetable, va0, 0);
+
+    // If page not mapped or not valid, try to fault it in
+    if(!pte || (*pte & PTE_V) == 0) {
       if((pa0 = vmfault(pagetable, va0, 0)) == 0) {
         return -1;
       }
+      // Re-get pte after vmfault
+      pte = walk(pagetable, va0, 0);
+    } else {
+      pa0 = PTE2PA(*pte);
     }
 
-    pte = walk(pagetable, va0, 0);
-    // forbid copyout over read-only user text pages.
+    // If page is COW (has PTE_COW but not PTE_W), trigger vmfault to resolve COW
+    if((*pte & PTE_COW) && !(*pte & PTE_W)) {
+      if((pa0 = vmfault(pagetable, va0, 0)) == 0) {
+        return -1;
+      }
+      // Re-get pte after vmfault
+      pte = walk(pagetable, va0, 0);
+    }
+
+    // forbid copyout over read-only user pages.
     if((*pte & PTE_W) == 0)
       return -1;
-      
+
     n = PGSIZE - (dstva - va0);
     if(n > len)
       n = len;
@@ -453,11 +469,32 @@ uint64
 vmfault(pagetable_t pagetable, uint64 va, int read)
 {
   uint64 mem;
+  pte_t *pte;
+  uint64 pa;
   struct proc *p = myproc();
 
   if (va >= p->sz)
     return 0;
   va = PGROUNDDOWN(va);
+
+  // Check if this is a write fault on a COW page
+  pte = walk(pagetable, va, 0);
+  if(pte && (*pte & PTE_V) && !read && (*pte & PTE_COW)) {
+    // This is a write fault on a COW page, need to allocate a new page
+    pa = PTE2PA(*pte);
+    mem = (uint64) kalloc();
+    if(mem == 0)
+      return 0;
+    // Copy the original page to the new page
+    memmove((void *)mem, (void *)pa, PGSIZE);
+    // Update the page table entry to point to the new page with write permission
+    *pte = PA2PTE(mem) | PTE_FLAGS(*pte) | PTE_W;
+    *pte &= ~PTE_COW;
+    // Decrement refcount on original page (it's been unmapped from this pagetable)
+    kfree((void *)pa);
+    return mem;
+  }
+
   if(ismapped(pagetable, va)) {
     return 0;
   }
