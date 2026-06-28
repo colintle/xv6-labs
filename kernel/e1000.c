@@ -104,21 +104,67 @@ e1000_transmit(char *buf, int len)
   // return -1 on failure (e.g., there is no descriptor available)
   // so that the caller knows to free buf.
   //
+  acquire(&e1000_lock);
 
-  
+  uint64 ring_index = regs[E1000_TDT];
+
+  // If E1000_TXD_STAT_DD is not set, the E1000 hasn't finished the
+  // previous transmission for this descriptor; the ring is overflowing.
+  if ((tx_ring[ring_index].status & E1000_TXD_STAT_DD) == 0) {
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // Free the last buffer that was transmitted from this descriptor, if any.
+  // if (tx_ring[ring_index].addr)
+    // kfree((void *)tx_ring[ring_index].addr);
+
+  // Fill in the descriptor.
+  tx_ring[ring_index].addr   = (uint64)buf;
+  tx_ring[ring_index].length = len;
+  tx_ring[ring_index].status = 0;
+  tx_ring[ring_index].cmd    = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+
+  // Advance the tail so the E1000 knows there is a new packet to send.
+  regs[E1000_TDT] = (ring_index + 1) % TX_RING_SIZE;
+
+  release(&e1000_lock);
   return 0;
 }
 
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver a buf for each packet (using net_rx()).
-  //
+  // Process all newly received packets.
+  while (1) {
+    // The next descriptor the E1000 may have written is one past RDT.
+    uint64 ring_index = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
 
+    // Check whether the E1000 has delivered a packet into this descriptor.
+    if ((rx_ring[ring_index].status & E1000_RXD_STAT_DD) == 0)
+      break;  // no new packet
+
+    // Save the received buffer and its length before handing the slot back.
+    char *buf = (char *)rx_ring[ring_index].addr;
+    uint16 len = rx_ring[ring_index].length;
+
+    // Allocate a fresh buffer for the E1000 to use next time around.
+    char *newbuf = kalloc();
+    if (!newbuf)
+      panic("e1000_recv: kalloc");
+
+    // Reinstall the fresh buffer and clear status so the E1000 can reuse the slot.
+    rx_ring[ring_index].addr   = (uint64)newbuf;
+    rx_ring[ring_index].status = 0;
+
+    // Advance RDT to tell the E1000 this slot is available again.
+    regs[E1000_RDT] = ring_index;
+
+    // Deliver the packet to the network stack.
+    // net_rx may call e1000_transmit (e.g. for an ARP reply), which acquires
+    // e1000_lock, so we must NOT hold that lock here.
+    net_rx(buf, len);
+  }
 }
 
 void
