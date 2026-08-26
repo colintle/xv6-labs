@@ -36,7 +36,7 @@ struct udp_queue {
   int count; // number of packets in queue
 };
 
-// static struct udp_queue ports[65535];
+static struct udp_queue *ports[65535];
 
 void
 netinit(void)
@@ -49,14 +49,25 @@ netinit(void)
 // prepare to receive UDP packets address to the port,
 // i.e. allocate any queues &c needed.
 //
-uint64
-sys_bind(void)
-{
-  //
-  // Your code here.
-  //
+uint64 sys_bind(void) {
+  int port;
+  argint(0, &port);
 
-  return -1;
+  if (ports[port])
+    return -1;
+
+  struct udp_queue *queue = (struct udp_queue *)kalloc();
+  if (queue == 0)
+    return -1;
+
+  memset(queue, 0, sizeof(*queue));
+  initlock(&queue->lock, "udp_queue");
+  queue->head = 0;
+  queue->tail = 0;
+  queue->count = 0;
+
+  ports[port] = queue;
+  return 0;
 }
 
 //
@@ -64,13 +75,20 @@ sys_bind(void)
 // release any resources previously created by bind(port);
 // from now on UDP packets addressed to port should be dropped.
 //
-uint64
-sys_unbind(void)
-{
-  //
-  // Optional: Your code here.
-  //
+uint64 sys_unbind(void) {
+  int port;
+  argint(0, &port);
 
+  if (port < 1 || port > 65535)
+    return -1;
+
+  struct udp_queue *queue = ports[port];
+
+  if (queue == 0)
+    return -1;
+
+  kfree(queue);
+  ports[port] = 0;
   return 0;
 }
 
