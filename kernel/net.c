@@ -10,6 +10,8 @@
 #include "file.h"
 #include "net.h"
 
+#define UDP_QUEUE_SIZE 1
+
 // xv6's ethernet and IP addresses
 static uint8 local_mac[ETHADDR_LEN] = { 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
 static uint32 local_ip = MAKE_IP_ADDR(10, 0, 2, 15);
@@ -19,12 +21,28 @@ static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
 static struct spinlock netlock;
 
+struct udp_packet {
+  char *buf;
+  int len;
+};
+
+struct udp_queue {
+
+  struct udp_packet *packets[UDP_QUEUE_SIZE];
+  struct spinlock lock;
+
+  int head;  // what recv should return
+  int tail;  // what ip_rx should insert
+  int count; // number of packets in queue
+};
+
+// static struct udp_queue ports[65535];
+
 void
 netinit(void)
 {
   initlock(&netlock, "netlock");
 }
-
 
 //
 // bind(int port)
