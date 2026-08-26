@@ -28,7 +28,7 @@ struct udp_packet {
 
 struct udp_queue {
 
-  struct udp_packet *packets[UDP_QUEUE_SIZE];
+  struct udp_packet packets[UDP_QUEUE_SIZE];
   struct spinlock lock;
 
   int head;  // what recv should return
@@ -215,19 +215,39 @@ sys_send(void)
   return 0;
 }
 
-void
-ip_rx(char *buf, int len)
-{
+void ip_rx(char *buf, int len) {
   // don't delete this printf; make grade depends on it.
   static int seen_ip = 0;
-  if(seen_ip == 0)
+  if (seen_ip == 0)
     printf("ip_rx: received an IP packet\n");
   seen_ip = 1;
 
-  //
-  // Your code here.
-  //
-  
+  struct eth *eth_header = (struct eth *)buf;
+  struct ip *ip_header = (struct ip *)(eth_header + 1);
+  struct udp *udp_header = (struct udp *)(ip_header + 1);
+
+  if (ip_header->ip_p != IPPROTO_UDP) {
+    kfree(buf);
+    return;
+  }
+
+  uint16 destination_port = ntohs(udp_header->dport);
+  struct udp_queue *queue = ports[destination_port];
+
+  acquire(&queue->lock);
+  if (queue == 0 || queue->count >= UDP_QUEUE_SIZE) {
+    kfree(buf);
+    return;
+  }
+
+  queue->packets[queue->tail].buf = buf;
+  queue->packets[queue->tail].len = len;
+  queue->count++;
+  queue->tail = (queue->tail + 1) % UDP_QUEUE_SIZE;
+
+  wakeup(queue);
+  release(&queue->lock);
+  return;
 }
 
 //
