@@ -116,8 +116,8 @@ e1000_transmit(char *buf, int len)
   }
 
   // Free the last buffer that was transmitted from this descriptor, if any.
-  // if (tx_ring[ring_index].addr)
-    // kfree((void *)tx_ring[ring_index].addr);
+  if (tx_ring[ring_index].addr)
+    kfree((void *)tx_ring[ring_index].addr);
 
   // Fill in the descriptor.
   tx_ring[ring_index].addr   = (uint64)buf;
