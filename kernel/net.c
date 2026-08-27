@@ -10,14 +10,15 @@
 #include "file.h"
 #include "net.h"
 
-#define UDP_QUEUE_SIZE 1
+#define UDP_QUEUE_SIZE 16
+#define UDP_MAX_NUMBER_OF_QUEUES 16
 
 // xv6's ethernet and IP addresses
-static uint8 local_mac[ETHADDR_LEN] = { 0x52, 0x54, 0x00, 0x12, 0x34, 0x56 };
+static uint8 local_mac[ETHADDR_LEN] = {0x52, 0x54, 0x00, 0x12, 0x34, 0x56};
 static uint32 local_ip = MAKE_IP_ADDR(10, 0, 2, 15);
 
 // qemu host's ethernet address.
-static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
+static uint8 host_mac[ETHADDR_LEN] = {0x52, 0x55, 0x0a, 0x00, 0x02, 0x02};
 
 static struct spinlock netlock;
 
@@ -37,12 +38,10 @@ struct udp_queue {
 };
 
 static struct udp_queue *ports[65535];
+static struct udp_queue queues[UDP_MAX_NUMBER_OF_QUEUES];
+static int used_queues[UDP_MAX_NUMBER_OF_QUEUES];
 
-void
-netinit(void)
-{
-  initlock(&netlock, "netlock");
-}
+void netinit(void) { initlock(&netlock, "netlock"); }
 
 //
 // bind(int port)
@@ -56,7 +55,14 @@ uint64 sys_bind(void) {
   if (ports[port])
     return -1;
 
-  struct udp_queue *queue = (struct udp_queue *)kalloc();
+  struct udp_queue *queue = 0;
+  for (int i = 0; i < UDP_MAX_NUMBER_OF_QUEUES; i++){
+    if (used_queues[i] != 1){
+      used_queues[i] = 1;
+      queue = &queues[i];
+      break;
+    }
+  }
   if (queue == 0)
     return -1;
 
@@ -107,20 +113,63 @@ uint64 sys_unbind(void) {
 // dport, *src, and *sport are host byte order.
 // bind(dport) must previously have been called.
 //
-uint64
-sys_recv(void)
-{
-  //
-  // Your code here.
-  //
-  return -1;
+uint64 sys_recv(void) {
+  int destination_port;
+  argint(0, &destination_port);
+
+  struct udp_queue *queue = ports[destination_port];
+
+  if (queue == 0)
+    return -1;
+
+  acquire(&queue->lock);
+  while (queue->count == 0)
+    sleep(queue, &queue->lock);
+
+  uint64 src_addr;
+  uint64 sport_addr;
+  uint64 buf_addr;
+  int maxlen;
+
+  argaddr(1, &src_addr);
+  argaddr(2, &sport_addr);
+  argaddr(3, &buf_addr);
+  argint(4, &maxlen);
+
+  struct udp_packet packet = queue->packets[queue->head];
+
+  queue->head = (queue->head + 1) % UDP_QUEUE_SIZE;
+  queue->count--;
+  release(&queue->lock);
+
+  struct eth *eth_header = (struct eth *)packet.buf;
+  struct ip *ip_header = (struct ip *)(eth_header + 1);
+  struct udp *udp_header = (struct udp *)(ip_header + 1);
+
+  uint32 ip_source = ntohl(ip_header->ip_src);
+  uint16 source_port = ntohs(udp_header->sport);
+
+  uint16 payload_length = ntohs(udp_header->ulen) - sizeof(struct udp);
+  if (maxlen > payload_length)
+    maxlen = payload_length;
+
+  struct proc *p = myproc();
+  if (copyout(p->pagetable, src_addr, (char *)&ip_source, sizeof(ip_source)) <
+          0 ||
+      copyout(p->pagetable, sport_addr, (char *)&source_port,
+              sizeof(source_port)) < 0 ||
+      copyout(p->pagetable, buf_addr, (char *)(udp_header + 1), maxlen) < 0) {
+    kfree(packet.buf);
+    return -1;
+  }
+
+  kfree(packet.buf);
+  return maxlen;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
 // of the University of California.
-static unsigned short
-in_cksum(const unsigned char *addr, int len)
-{
+static unsigned short in_cksum(const unsigned char *addr, int len) {
   int nleft = len;
   const unsigned short *w = (const unsigned short *)addr;
   unsigned int sum = 0;
@@ -131,7 +180,7 @@ in_cksum(const unsigned char *addr, int len)
    * sequential 16 bit words to it, and at the end, fold back all the
    * carry bits from the top 16 bits into the lower 16 bits.
    */
-  while (nleft > 1)  {
+  while (nleft > 1) {
     sum += *w++;
     nleft -= 2;
   }
@@ -154,9 +203,7 @@ in_cksum(const unsigned char *addr, int len)
 //
 // send(int sport, int dst, int dport, char *buf, int len)
 //
-uint64
-sys_send(void)
-{
+uint64 sys_send(void) {
   struct proc *p = myproc();
   int sport;
   int dst;
@@ -171,17 +218,17 @@ sys_send(void)
   argint(4, &len);
 
   int total = len + sizeof(struct eth) + sizeof(struct ip) + sizeof(struct udp);
-  if(total > PGSIZE)
+  if (total > PGSIZE)
     return -1;
 
   char *buf = kalloc();
-  if(buf == 0){
+  if (buf == 0) {
     printf("sys_send: kalloc failed\n");
     return -1;
   }
   memset(buf, 0, PGSIZE);
 
-  struct eth *eth = (struct eth *) buf;
+  struct eth *eth = (struct eth *)buf;
   memmove(eth->dhost, host_mac, ETHADDR_LEN);
   memmove(eth->shost, local_mac, ETHADDR_LEN);
   eth->type = htons(ETHTYPE_IP);
@@ -204,7 +251,7 @@ sys_send(void)
   udp->ulen = htons(len + sizeof(struct udp));
 
   char *payload = (char *)(udp + 1);
-  if(copyin(p->pagetable, payload, bufaddr, len) < 0){
+  if (copyin(p->pagetable, payload, bufaddr, len) < 0) {
     kfree(buf);
     printf("send: copyin failed\n");
     return -1;
@@ -234,8 +281,14 @@ void ip_rx(char *buf, int len) {
   uint16 destination_port = ntohs(udp_header->dport);
   struct udp_queue *queue = ports[destination_port];
 
+  if (queue == 0){
+    kfree(buf);
+    return;
+  }
+
   acquire(&queue->lock);
-  if (queue == 0 || queue->count >= UDP_QUEUE_SIZE) {
+  if (queue->count >= UDP_QUEUE_SIZE) {
+    release(&queue->lock);
     kfree(buf);
     return;
   }
@@ -257,28 +310,28 @@ void ip_rx(char *buf, int len) {
 // qemu to send IP packets to xv6; the real ARP
 // protocol is more complex.
 //
-void
-arp_rx(char *inbuf)
-{
+void arp_rx(char *inbuf) {
   static int seen_arp = 0;
 
-  if(seen_arp){
+  if (seen_arp) {
     kfree(inbuf);
     return;
   }
   printf("arp_rx: received an ARP packet\n");
   seen_arp = 1;
 
-  struct eth *ineth = (struct eth *) inbuf;
-  struct arp *inarp = (struct arp *) (ineth + 1);
+  struct eth *ineth = (struct eth *)inbuf;
+  struct arp *inarp = (struct arp *)(ineth + 1);
 
   char *buf = kalloc();
-  if(buf == 0)
+  if (buf == 0)
     panic("send_arp_reply");
-  
-  struct eth *eth = (struct eth *) buf;
-  memmove(eth->dhost, ineth->shost, ETHADDR_LEN); // ethernet destination = query source
-  memmove(eth->shost, local_mac, ETHADDR_LEN); // ethernet source = xv6's ethernet address
+
+  struct eth *eth = (struct eth *)buf;
+  memmove(eth->dhost, ineth->shost,
+          ETHADDR_LEN); // ethernet destination = query source
+  memmove(eth->shost, local_mac,
+          ETHADDR_LEN); // ethernet source = xv6's ethernet address
   eth->type = htons(ETHTYPE_ARP);
 
   struct arp *arp = (struct arp *)(eth + 1);
@@ -298,16 +351,14 @@ arp_rx(char *inbuf)
   kfree(inbuf);
 }
 
-void
-net_rx(char *buf, int len)
-{
-  struct eth *eth = (struct eth *) buf;
+void net_rx(char *buf, int len) {
+  struct eth *eth = (struct eth *)buf;
 
-  if(len >= sizeof(struct eth) + sizeof(struct arp) &&
-     ntohs(eth->type) == ETHTYPE_ARP){
+  if (len >= sizeof(struct eth) + sizeof(struct arp) &&
+      ntohs(eth->type) == ETHTYPE_ARP) {
     arp_rx(buf);
-  } else if(len >= sizeof(struct eth) + sizeof(struct ip) &&
-     ntohs(eth->type) == ETHTYPE_IP){
+  } else if (len >= sizeof(struct eth) + sizeof(struct ip) &&
+             ntohs(eth->type) == ETHTYPE_IP) {
     ip_rx(buf, len);
   } else {
     kfree(buf);
