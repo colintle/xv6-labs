@@ -21,12 +21,15 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
+  for (int i = 0; i < NCPU; i++){
+    initlock(&kmem[i].lock, "kmem");
+  }
+  // initlock(&kmem.lock, "kmem");
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -56,27 +59,66 @@ kfree(void *pa)
 
   r = (struct run*)pa;
 
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  push_off();
+  int id = cpuid();
+
+  acquire(&kmem[id].lock);
+  r->next = kmem[id].freelist;
+  kmem[id].freelist = r;
+  release(&kmem[id].lock);
+
+  pop_off(); 
 }
 
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
-void *
-kalloc(void)
-{
-  struct run *r;
+void *kalloc(void) {
+  struct run *r = 0;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
-  if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+  push_off();
+  int id = cpuid();
 
-  if(r)
-    memset((char*)r, 5, PGSIZE); // fill with junk
-  return (void*)r;
+  // Try local CPU.
+  acquire(&kmem[id].lock);
+
+  r = kmem[id].freelist;
+  if (r)
+    kmem[id].freelist = r->next;
+
+  release(&kmem[id].lock);
+
+  // Local list empty: find a donor CPU and steal its ENTIRE freelist
+  // in one O(1) pointer swap, instead of a fixed-size batch. Splicing
+  // a whole list costs the same single assignment whether it holds 1
+  // page or 30000, so this keeps both the number of remote lock
+  // acquisitions AND the time each is held to a minimum -- unlike a
+  // partial/half steal, which must walk N nodes to find the split
+  // point while holding the donor's lock.
+  if (r == 0) {
+    for (int off = 1; off < NCPU; off++) {
+      int i = (id + off) % NCPU;
+
+      acquire(&kmem[i].lock);
+      r = kmem[i].freelist;
+      if (r)
+        kmem[i].freelist = 0;
+      release(&kmem[i].lock);
+
+      if (r) {
+        // Hand ourselves the first page, keep the rest locally.
+        acquire(&kmem[id].lock);
+        kmem[id].freelist = r->next;
+        release(&kmem[id].lock);
+        break;
+      }
+    }
+  }
+
+  pop_off();
+
+  if (r)
+    memset((char *)r, 5, PGSIZE);
+
+  return (void *)r;
 }
