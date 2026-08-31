@@ -121,32 +121,62 @@ release(struct spinlock *lk)
 }
 
 #ifdef LAB_LOCK
-static void
-read_acquire_inner(struct rwspinlock *rwlk)
-{
-  // Replace this with your implementation.
-  acquire(&rwlk->l);
+static void read_acquire_inner(struct rwspinlock *rwlk) {
+  while (1) {
+    if (__atomic_load_n(&rwlk->writers, __ATOMIC_SEQ_CST)) {
+      continue;
+    }
+    __atomic_fetch_add(&rwlk->readers, 1, __ATOMIC_SEQ_CST);
+
+    if (__atomic_load_n(&rwlk->writers, __ATOMIC_SEQ_CST)) {
+      __atomic_fetch_sub(&rwlk->readers, 1, __ATOMIC_SEQ_CST);
+      continue;
+    }
+    return;
+  }
 }
 
 static void
 read_release_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  release(&rwlk->l);
+  __atomic_fetch_sub(&rwlk->readers, 1, __ATOMIC_SEQ_CST);
 }
 
-static void
-write_acquire_inner(struct rwspinlock *rwlk)
-{
-  // Replace this with your implementation.
-  acquire(&rwlk->l);
+static void write_acquire_inner(struct rwspinlock *rwlk) {
+  __atomic_fetch_add(&rwlk->writers, 1, __ATOMIC_SEQ_CST);
+
+  while (1) {
+    if (__atomic_load_n(&rwlk->readers, __ATOMIC_SEQ_CST)) {
+      continue;
+    }
+
+    // Atomically claim writer_active (0 -> 1) so that only one of
+    // several concurrently-waiting writers can win it. A plain
+    // load-then-store here is a check-then-act race: two writers can
+    // both observe writer_active == 0 and both proceed, breaking
+    // writer/writer mutual exclusion.
+    int expected = 0;
+    if (!__atomic_compare_exchange_n(&rwlk->writer_active, &expected, 1,
+                                      0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+      continue;
+    }
+
+    // A reader may have slipped in between our readers check above
+    // and winning the CAS; if so, back off and retry.
+    if (__atomic_load_n(&rwlk->readers, __ATOMIC_SEQ_CST)) {
+      __atomic_store_n(&rwlk->writer_active, 0, __ATOMIC_SEQ_CST);
+      continue;
+    }
+
+    return;
+  }
 }
 
 static void
 write_release_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  release(&rwlk->l);
+  __atomic_store_n(&rwlk->writer_active, 0, __ATOMIC_SEQ_CST);
+  __atomic_fetch_sub(&rwlk->writers, 1, __ATOMIC_SEQ_CST);
 }
 
 void
@@ -180,8 +210,9 @@ write_release(struct rwspinlock *rwlk)
 void
 initrwlock(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  initlock(&rwlk->l, "rwlk");
+  rwlk->readers = 0;
+  rwlk->writers = 0;
+  rwlk->writer_active = 0;
 }
 
 // Test rwspinlock implementation.
